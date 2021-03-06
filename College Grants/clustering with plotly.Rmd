@@ -1,0 +1,130 @@
+---
+title: "Clustering"
+output:
+  html_document:
+    df_print: paged
+    code_folding: show
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  message = FALSE
+)
+```
+Suppose a granting agency wants to identify colleges that have high numbers of low-income and first generation colleges attendees to give additional funding.
+
+Using clustering methods, I will identify a collection of colleges that meet these criteria.
+
+
+```{r Libraries}
+# Load libraries
+library(tidyverse)
+library(ggdendro)
+library(plotly)
+```
+
+# Load and explore data structure
+
+```{r Explore data}
+setwd("C:/Users/danie/OneDrive/Desktop/Data")
+
+colleges <- read.delim('colleges.tsv', 
+                       header = TRUE, 
+                       sep = '\t')
+colleges[1:50,]
+```
+
+# Variable Selection and Data Preparation
+
+Before creating our clusters, I will remove missing values and duplicate values from my data set. Some schools have more than one entry because they have an undergraduate program, law school, etc., so distinct() will select one row per college.
+
+```{r Create clusters}
+#cluster to identify schools to receive grant money
+college_features <- colleges %>%
+  select(institution_name, control, first_gen_share, poverty_rate, 
+         family_income_median, median_earnings, top_ten) %>%
+  na.omit() %>%
+  distinct()
+
+
+kmeans_cluster <- kmeans(select(college_features, -institution_name, -control), 3)
+
+```
+
+# Selecting collection of schools to target for grants
+
+```{r Plot}
+#plotting k-means clusters
+college_features <- college_features %>%
+  mutate(cluster = kmeans_cluster$cluster)
+
+college_features %>%
+  plot_ly(x = ~family_income_median, 
+          y = ~median_earnings, 
+          color = ~factor(cluster),
+          hoverinfo = 'text',
+          text = ~paste('</br><b> Name: </b>', institution_name,
+                        '</br><b> Type: </b>', control))
+
+```
+
+The blue cluster represents schools with students that have low family incomes, and may be our selection criteria to give grants. However, many of these schools are private for-profit, which are known to be expensive and provide poor quality education for low financial benefit - going straight to the work force might be a better bet. 
+
+Since it might not be very ethical to sent students to these predatory institutions and also perhaps not in the vision of the company giving the grants, I will look at the qualities of the top 10 schools from the US News and World Report and determine if there's something about them that makes them different. If so, are there any schools that are similar?
+
+One way to approach this is to view college major composition. Is there a difference between the composition of student majors between the top 10 schools and the others?
+
+```{r Hierarchical Clustering}
+top_ten <- 
+  colleges %>%
+  filter(top_ten == TRUE)
+
+random_sample <-
+  colleges %>%
+  filter(top_ten == FALSE) %>%
+  sample_n(40, replace = FALSE)
+
+hier_data = rbind(top_ten, random_sample)
+
+major_perc <-
+  hier_data %>%
+  select(institution_name, top_ten, ends_with('_major_perc')) %>%
+  na.omit()
+
+#compute the distance
+euclidean <- dist(select(major_perc, -institution_name, -top_ten),
+                  method = 'euclidean')
+
+#hierarchical clustering
+hier <- hclust(euclidean)
+
+hier$labels <- major_perc$institution_name
+
+#plot dendrogram
+ggdendrogram(hier, rotate = TRUE, size = 2)
+
+```
+Let's color the top ten.
+
+```{r With Color}
+dendro_data <- dendro_data(hier)
+
+dendro_data$labels <- unique(merge(dendro_data$labels,
+                                   select(college_features, institution_name, top_ten),
+                                   by.x = 'label',
+                                   by.y = 'institution_name',
+                                   all.x = TRUE))
+
+ggplot(segment(dendro_data)) +
+  geom_segment(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_text(data = label(dendro_data),
+            aes(label = label, x= x, y = 0, hjust = 0, color = top_ten),
+            size = 2) +
+  coord_flip() +
+  scale_y_reverse(expand = c(0.25, 0)) +
+  theme_void() +
+  theme(legend.position = 'bottom')
+
+```
+
+# Conclusion
+From the dendrogram above, as expected, the top 10 schools are all very similar in terms of major composition. Schools that branch away right away and thus probably not a wise investment include beauty schools and community colleges. Some that we might consider include University of Connecticut - Stanford and Fairleigh Dickinson University.
